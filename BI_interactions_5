@@ -1,0 +1,66 @@
+select distinct w.*, c.match_flag,
+c.pzp_zp6_seg_id, c.pzp_zp6_seg_name, c.pzp_zp6_lifestage_group_alias,
+c.pzp_zp6_lifestage_group_name, c.pzp_zp6_social_group_alias, c.pzp_zp6_social_group_name 
+from claritas_cohort as c, claritas_sep_2023 as w
+where c.u_addr1 = w.addr1 and c.u_city = w.city and c.u_state = w.state and c.u_zipcode = w.zipcode;
+ 
+select * from contact_final as c, contact_addr as c1 where c.contact_id_18=c1.contact_id_18;
+select state, count(distinct c1.contact_id_18) from contact_final as c, contact_addr as c1 where c.contact_id_18=c1.contact_id_18
+group by state order by count(distinct c1.contact_id_18) desc;
+
+ --all no email
+ select distinct email from (
+ select c.*, c1.contact_id_18 as nulla from contact_addr as c left join contact_final as c1 on c.contact_id_18=c1.contact_id_18
+ ) as x where x.nulla is null;
+
+ select * from contact_final as c, contact_addr as c1 where c.contact_id_18=c1.contact_id_18;
+
+select state, count(distinct city), 
+count(distinct c1.contact_id_18) as cnt_total
+from contact_final as c, contact_addr as c1, state_code as s 
+where c.contact_id_18=c1.contact_id_18 and c1.state=s.state_code
+--and state='TX'
+group by state  
+order by count(distinct c1.contact_id_18) desc;
+
+select count(city), sum(cnt_total) as a from (
+select concat(upper(city),', ',s.state_code) as city,
+count(distinct c1.contact_id_18) as cnt_total
+from contact_final as c, contact_addr as c1, state_code as s 
+where c.contact_id_18=c1.contact_id_18 and c1.state=s.state_code
+--and state='TX'
+group by concat(upper(city),', ',s.state_code))   as ddd
+where cnt_total>100 and cnt_total<=500;
+--order by count(distinct c1.contact_id_18) desc;
+
+select state, count(distinct city), sum(cnt) from (
+select state, city, count(distinct c1.contact_id_18)  as cnt
+from contact_final as c, contact_addr as c1, state_code as s 
+where c.contact_id_18=c1.contact_id_18 and c1.state=s.state_code
+--and state='TX' 
+group by state, city 
+having count(distinct c1.contact_id_18) > 50
+--order by city, count(distinct c1.contact_id_18) desc
+) as x
+group by state order by state;
+
+with CTE as (
+select state as state_CTE, --count(distinct city), 
+count(distinct c1.contact_id_18) as cnt_total
+from contact_final as c, contact_addr as c1, state_code as s 
+where c.contact_id_18=c1.contact_id_18 and c1.state=s.state_code
+group by state)
+select CTE.*, a.cities, a.city_cnt 
+from CTE left join (select state, count(distinct city) as cities, sum(cnt) as city_cnt from (
+select state, city, count(distinct c1.contact_id_18)  as cnt
+from contact_final as c, contact_addr as c1, state_code as s 
+where c.contact_id_18=c1.contact_id_18 and c1.state=s.state_code
+group by state, city 
+having count(distinct c1.contact_id_18) > 100 and count(distinct c1.contact_id_18) < 500 --!!!!!!!!!!!!!!
+) as m group by state) as a on a.state = CTE.state_CTE
+order by cnt_total desc;
+
+select distinct c.contact_type, count(*) 
+from  contact_final as c, contact_addr as c1
+where c.contact_id_18=c1.contact_id_18
+group by c.contact_type;
