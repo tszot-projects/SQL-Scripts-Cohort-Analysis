@@ -1,0 +1,91 @@
+/* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+After email campaign tables are loaded from blob...cleanup
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+/*
+--42 each
+select  distinct concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) as date1 from sent order by concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) desc; 
+select  distinct concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) as date1 from bounces order by concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) desc; 
+select  distinct concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) as date1 from opens order by concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) desc; 
+select  distinct concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) as date1 from clicks order by concat (DatePart(YEAR,EventDate),' ', DatePart(MONTH,EventDate)) desc; 
+*/
+
+--***************************************************
+-- BOUNCES (VERIFICATION)
+--***************************************************
+select top 100 * from bounces; 
+select count(*) from bounces; --43,878 
+select count(*) from bounces where bouncecategory = 'Hard bounce'; --30% hard bounces
+select count(*) from bounces where bouncecategory <> 'Hard bounce'; --70% not hard bounces
+
+select * from bounces where bouncecategory = 'Hard bounce' and emailaddress = 'xxxxxxx@clemson.edu';
+select count(*) from sent where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce');
+
+--***************************************************
+-- DELETE HARD BOUNCES
+--***************************************************
+select count(*) from clicks where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce'); --23K
+delete from clicks where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce');
+
+select count(*) from opens where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce'); --136K
+delete from opens where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce');
+
+select count(*) from sent where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce'); --409K
+delete from sent where emailaddress in (select emailaddress from Bounces where bouncecategory = 'Hard bounce');
+
+--***************************************************************************
+-- OPENS - Group all opens, not just unique opens, into OPENS_FINAL table
+--***************************************************************************
+select count(*) from opens_test; --22,948,887 full, untouched
+select count(*) from opens_test where isunique<>'True';--10,278,214
+select count(*) from opens_test where isunique ='True' --12,670,673
+
+--create table
+select * into opens_final from ( 
+select sendid, subscriberkey, subscriberid, emailaddress, count(*) as send_opens from opens_test group by sendid, subscriberkey, subscriberid, emailaddress) as b;
+
+--verify
+select count(*) from opens_final as x; --12,747,592
+select top 100 * from opens_final;
+select count(*) from opens; --12,670,673 
+select count(*) from opens_final; --12,747,592   
+select count(*) from opens_final where send_opens=1; --8,056,078. 63% opened email once 
+select count(*) from opens_final where send_opens>1; --4,691,514. 37% opened email more than once 
+select avg(send_opens) from opens_final where send_opens>1 and send_opens < 10; --average of the 37% = 2. So on average, those that opened email more than once, opened twice
+
+--***************************************************************************
+-- CLICKS - Group unique clicks, not all clicks, into CLICKS_FINAL table
+--***************************************************************************
+--create table
+--total clicks by send
+select * into clicks_final from ( 
+select clientid, sendid, subscriberkey, emailaddress, subscriberid, listid, eventttype as eventtype, count(distinct sendurlid) as send_clicks
+from clicks
+group by clientid, sendid, subscriberkey, emailaddress, subscriberid, listid, eventttype) as b;
+
+--verify
+select top 1000 * from clicks_final order by emailaddress, sendid;
+select count(*) from clicks_final; --1,790,905
+select count(*) from (select distinct sendid, subscriberkey, emailaddress, subscriberid from clicks_final ) as x;--1,790,905
+select count(*) from clicks_final where send_clicks=1; --1,606,157. 90% clicked one *distinct* url in email (if they clicked the same url multiple times, counted only once)
+select count(*) from clicks_final where send_clicks>1; --184,748. 10% clicked more than one *distinct* url in email 
+select avg(send_clicks) from clicks_final where send_clicks>1 and send_clicks < 10; --average of 10% = 2. So on average, those that clicked more than one *distinct* url in email, opened two
+
+--***********************************************  
+-- SENT - Drop columns that are not needed
+--***********************************************  
+select top 100 * from sent;
+select count(*) from sent; --30,895,970
+select count(distinct sendid) from sent; --14,415
+select count(distinct batchid) from sent; --11,034
+
+-- drop columns
+alter table sent drop column triggeredsendexternalkey;
+alter table sent drop column campaignid;
+
+--***************************************************
+-- SUMMARY TABLE (VERIFICATION)
+--***************************************************
+exec sp_columns sent;
+exec sp_columns opens_final;
+exec sp_columns clicks_final;
+exec sp_columns bounces;
