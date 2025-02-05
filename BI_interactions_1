@@ -1,0 +1,252 @@
+/* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Load interaction & campaign tables. Create _final tables after filtering
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+/*
+--create table mktg_tmp (
+create table interaction (
+case_id varchar(100),
+interaction_id varchar(100),
+interaction_record_type varchar(100),
+Interaction_Status varchar(50),
+Contact_Record_Type varchar(50),
+Contact_Type varchar(50),
+WWP_Status varchar(50),
+Contact_Full_Name varchar(200),
+Gender varchar(100),
+Age_of_Contact int,
+Method_of_Communication varchar(50),
+contact_id varchar(100),
+Interaction_Date smalldatetime,
+Subject  varchar(100),
+Approval_Date smalldatetime,
+Branch  varchar(100)
+); 
+
+--create table mktg_tmp (
+Create table campaign(
+contact_id_18 varchar(100),
+Contact_ID varchar(100),
+Campaign_ID varchar(100),
+Campaign_Type varchar(100),
+Sub_Type varchar(100),
+Start_Date smalldatetime,
+End_Date smalldatetime,
+Campaign_Status varchar(50),
+Campaign_Start_Date smalldatetime,
+Campaign_End_Date smalldatetime,
+Method_of_Delivery varchar(100),
+WWP_Status varchar(100),
+Gender varchar(50),
+Contact_Type varchar(100),
+Member_Status varchar(100),
+Campaign_Record_Type varchar(100),
+Campaign_Member_Type varchar(100),
+Campaign_Name varchar(100));
+
+--drop table contact;
+--create table mktg_tmp (
+create table contact (
+contact_id_18 varchar(100),
+Contact_ID varchar(100),
+Email varchar(100),
+Created_Date smalldatetime,
+Contact_Type varchar(50),
+Contact_Record_Type varchar(50),
+Approval_Date smalldatetime,
+First_Name varchar(100),
+Last_Name varchar(100),
+WWP_Status varchar(50),
+Last_Activity smalldatetime,
+Email_Opt_Out VARCHAR(10)
+); 
+
+--drop table contact_addr;
+--create table mktg_tmp (
+create table contact_addr (
+contact_id_18 varchar(100), 
+Email varchar(100), 
+addr1 VARCHAR(100),
+addr2 VARCHAR(100),
+city VARCHAR(100),
+state VARCHAR(100),
+zipcode VARCHAR(100),
+Contact_Type varchar(50),
+Contact_Record_Type varchar(50),
+age_of_contact int,
+injury_type varchar(50)
+); 
+
+--drop table claritas_cohort;
+--create table mktg_tmp (
+create table claritas_cohort (
+id varchar(100), 
+u_addr1 varchar(100), 
+u_city varchar(100), 
+u_state varchar(100), 
+u_zipcode varchar(100), 
+standardized_address varchar(100), 
+standardized_city varchar(100), 
+standardized_state varchar(100), 
+standardized_zip varchar(100), 
+match_flag varchar(100), 
+pzp_zp6_seg_id varchar(100), 
+pzp_zp6_seg_name varchar(100), 
+pzp_zp6_lifestage_group_alias varchar(100), 
+pzp_zp6_lifestage_group_name varchar(100), 
+pzp_zp6_social_group_alias varchar(100), 
+pzp_zp6_social_group_name varchar(100));
+*/
+
+/*
+DROP EXTERNAL DATA SOURCE mktg_tmp;
+*/
+
+CREATE EXTERNAL DATA SOURCE mktg_tmp
+WITH 
+(
+    TYPE = BLOB_STORAGE,
+    LOCATION = 'https://wwpdevblob.blob.core.windows.net/marketing'
+);
+
+exec sp_columns mktg_tmp;
+select count(*) from mktg_tmp;
+select * from mktg_tmp; 
+
+--rename temp table to main table
+exec sp_rename 'mktg_tmp', 'interaction';
+exec sp_rename 'mktg_tmp', 'campaign';
+exec sp_rename 'mktg_tmp', 'contact';
+exec sp_rename 'mktg_tmp', 'contact_addr';
+exec sp_rename 'mktg_tmp', 'claritas_cohort'; --after coding in Claritas, join segment names to contacts
+
+select count(*) from interaction; 
+select count(*) from campaign; 
+select count(*) from contact; 
+select count(*) from contact_addr; 
+select count(*) from claritas_cohort;
+
+ 
+-- !!!!!!!!!!!!!! 
+-- MORE INSTRUCTIONS AFTER BULK INSERT
+
+BULK INSERT mktg_tmp FROM 'Interactions_Q12020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Interactions_Q22020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q32020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q42020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q12021.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Interactions_Q22021.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q32021.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q42021.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2); 
+BULK INSERT mktg_tmp FROM 'Interactions_Q12022.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Interactions_Q22022.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q32022.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+BULK INSERT mktg_tmp FROM 'Interactions_Q42022.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2); 
+BULK INSERT mktg_tmp FROM 'Interactions_Q12023.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Interactions_Q22023.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Interactions_Q32023_31Jul.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+/*
+BULK INSERT mktg_tmp FROM 'Campaigns_H12020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Campaigns_H22020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Campaigns_H12021.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Campaigns_H22021.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Campaigns_H12022.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Campaigns_H22022.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Campaigns_2023_31Jul.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+*/
+
+/*
+BULK INSERT mktg_tmp FROM 'Contacts_superset_before_2011.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Contacts_superset_2011_2015.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Contacts_superset_2016_2020.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Contacts_superset_2021_31Jul.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);  
+*/
+
+/*
+BULK INSERT mktg_tmp FROM 'Contacts_addr_2015_2018_1.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);
+BULK INSERT mktg_tmp FROM 'Contacts_addr_2019_31Jul_1.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2);   
+BULK INSERT mktg_tmp FROM 'Contacts_addr_bfr_2015_1.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2); 
+*/
+/*
+BULK INSERT mktg_tmp FROM '14036722_CODED_RECORDS_(lean_Sep2023)_SQL.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', firstrow=2); 
+*/ 
+
+alter table interaction add commitment int;
+update interaction set commitment =1	 where interaction_record_type='Resource Center Interactions';
+update interaction set commitment =2	 where interaction_record_type='Registration Interactions';
+update interaction set commitment =2	 where interaction_record_type='Alumni/ Peer Support Interactions';
+update interaction set commitment =2	 where interaction_record_type='GCR Interactions';
+update interaction set commitment =2	 where interaction_record_type='Benefits Interactions';
+update interaction set commitment =2	 where interaction_record_type='EFA Interactions';
+update interaction set commitment =3	 where interaction_record_type='Triage Interactions';
+update interaction set commitment =3	 where interaction_record_type='Warriors to Work Interactions';
+update interaction set commitment =3	 where interaction_record_type='Talk Interactions';
+update interaction set commitment =3	 where interaction_record_type='PH&W Interactions';
+update interaction set commitment =3	 where interaction_record_type='Financial Education Interactions';
+update interaction set commitment =3	 where interaction_record_type='Adaptive Sports Interactions';
+update interaction set commitment =4	 where interaction_record_type='Soldier Ride Interactions';
+update interaction set commitment =4	 where interaction_record_type='Project Odyssey Interactions';
+update interaction set commitment =5	 where interaction_record_type='WCN Interactions';
+update interaction set commitment =5	 where interaction_record_type='Independence Program Interactions';
+
+--+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ --Create views
+--+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+create view interaction_final as select * from interaction 
+where  wwp_status = 'Approved' and contact_type in ('Alumni','Family Support') and contact_id is not null and interaction_status = 'Two-way' ; --991,855 !!!!!
+
+drop view campaign_final;
+create view campaign_final as select * from campaign 
+where wwp_status = 'Approved' and member_status like 'Fully Completed%'; -- 393,079!!!!!
+
+drop view contact_final;
+create view contact_final as select * from contact 
+where wwp_status = 'Approved'
+and email not like 'noemail%' and email not like 'nomail%' and email not like 'none@%' and email not like 'notlisted@%' and email not like 'unknown@%'; --233,256 !!!!!
+
+
+--+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ --Verify
+--+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+select distinct email, count(*) from contact 
+where wwp_status = 'Approved' 
+and (email  like 'noemail%' OR email  like 'nomail%' OR email  like 'none@%' OR email  like 'notlisted@%' OR email  like 'unknown@%')
+group by email
+order by count(*) desc; 
+
+select count(*) from contact_final;
+select contact_type, count(*) from contact_final group by contact_type;
+select distinct interaction_record_type, commitment from interaction_final order by commitment desc;
+select campaign_type, count(*) from campaign_final group by campaign_type order by count(*) desc;
+
+select top 10 * from interaction where wwp_status = 'Approved' and contact_type in ('Alumni','Family Support') and contact_id is not null and interaction_status = 'Two-way';
+select count(distinct contact_id) from interaction where  wwp_status = 'Approved' and contact_type in ('Alumni','Family Support') and contact_id is not null and interaction_status = 'Two-way' ; --86,506 final !!!!!
+select count(distinct contact_id) from interaction_final; --115,402 
+select * from interaction where contact_id is null; --351
+select * from interaction where wwp_status <> 'Approved'; --60,817
+select * from interaction where contact_type not in ('Alumni','Family Support'); --0
+select distinct interaction_record_type from interaction; --16
+select distinct interaction_record_type, count(*) from interaction group by interaction_record_type order by count(*) desc;
+select distinct interaction_record_type, count(contact_id) from interaction group by interaction_record_type order by count(contact_id) desc; --interaction type !!!!!
+select * from interaction where contact_id = '0033300001sNDlZAAW';
+
+-- select count(distinct contact_id_18) from campaign_final; --63,588
+select top 10 * from campaign where wwp_status = 'Approved' and member_status like 'Fully Completed%';
+select count(distinct contact_id) from campaign where wwp_status = 'Approved' and member_status like 'Fully Completed%'; --63,667 final !!!!!
+select count(distinct contact_id) from campaign; --67,271
+select * from campaign where contact_id is null; --0
+select * from campaign where wwp_status <> 'Approved'; --8,480
+select distinct campaign_type from campaign; --66
+select distinct sub_type from campaign; --68
+select distinct campaign_type, count(*) from campaign group by campaign_type order by count(*) desc; --campaign type !!!!!
+select distinct campaign_type, count(contact_id) from campaign group by campaign_type order by count(contact_id) desc;
+select * from campaign where contact_id = '0034000000wl502';
+ 
+select commitment, interaction_record_type, al, uniq, round(100*perc,1) as perc from (
+select distinct commitment, interaction_record_type, count(contact_id) as al, count(distinct contact_id) as uniq, 
+CAST(cast(count(distinct contact_id) as float)/cast(count(contact_id) as int) as float) as perc
+from interaction_final group by commitment, interaction_record_type) as a  order by commitment desc, al desc, uniq desc; --interaction type !!!!!
+
+select  campaign_type, al, uniq, round(100*perc,1) as perc from (
+select distinct campaign_type, count(contact_id) as al, count(distinct contact_id) as uniq, 
+CAST(cast(count(distinct contact_id) as float)/cast(count(contact_id) as int) as float) as perc
+from campaign_final group by campaign_type) as a  order by al desc, uniq desc; --interaction type !!!!!
