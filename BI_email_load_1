@@ -1,0 +1,67 @@
+/* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Load email campaign tables from blob
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+
+-- Drop the temporary table if it exists to ensure a fresh start
+DROP TABLE IF EXISTS mktg_tmp;
+
+-- Create a temporary table mimicking the file format for data import
+CREATE TABLE mktg_tmp ( 
+    clientid INT,
+    sendid INT,
+    subscriberkey VARCHAR(100),
+    emailaddress VARCHAR(100),
+    subscriberid INT,
+    listid INT,
+    eventdate SMALLDATETIME,
+    eventtype VARCHAR(20),
+    batchid INT,
+    triggeredsendexternalkey VARCHAR(100),
+    isunique VARCHAR(20)
+);
+
+-- Display the structure of the created table
+EXEC sp_columns mktg_tmp;
+
+-- Verify that the table is empty before loading data
+SELECT COUNT(*) FROM mktg_tmp; -- Expected output: 0
+SELECT * FROM mktg_tmp; -- Expected output: Empty result set
+
+-- Drop the external data source if it exists (needed for re-creation)
+DROP EXTERNAL DATA SOURCE IF EXISTS mktg_tmp;
+
+-- Create an external data source pointing to the Azure Blob Storage location
+CREATE EXTERNAL DATA SOURCE mktg_tmp
+WITH (
+    TYPE = BLOB_STORAGE,
+    LOCATION = 'https://devblob.blob.core.windows.net/marketing' 
+);
+
+-- !!!!!!!!!!!!!! 
+-- MORE INSTRUCTIONS AFTER BULK INSERT (Potential additional steps needed)
+
+-- Bulk insert data from multiple CSV files into the temporary table
+-- Assumes files are named based on a YYYYMM format and stored in the blob storage
+-- 'firstrow=2' skips the header row in each file
+
+BULK INSERT mktg_tmp FROM '202307Opens.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', FIRSTROW=2);
+BULK INSERT mktg_tmp FROM '202306Opens.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', FIRSTROW=2);
+BULK INSERT mktg_tmp FROM '202305Opens.csv' WITH (DATA_SOURCE = 'mktg_tmp', FORMAT = 'CSV', FIRSTROW=2);
+-- (Additional BULK INSERT commands for older files are included in the script)
+
+-- Remove unnecessary columns that are not needed for analysis
+ALTER TABLE mktg_tmp DROP COLUMN smtpcode;
+ALTER TABLE mktg_tmp DROP COLUMN bouncereason;
+ALTER TABLE mktg_tmp DROP COLUMN triggeredsendexternalkey;
+ALTER TABLE mktg_tmp DROP COLUMN batchid;
+
+-- Drop the existing Opens table if it exists to replace it with new data
+DROP TABLE IF EXISTS Opens;
+
+-- Rename the temporary table to 'Opens', making it the main working table
+EXEC sp_rename 'mktg_tmp', 'Opens';
+
+-- Verify data was loaded correctly by checking the record count
+SELECT COUNT(*) FROM Opens;
+
+-- Additional campaign-related tables (Opens, Clicks, Sent, Bounces, Campaign, Interaction, Contact) exist
