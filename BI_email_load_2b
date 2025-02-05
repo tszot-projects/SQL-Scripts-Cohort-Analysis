@@ -1,0 +1,253 @@
+/* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+subscriber_final = Count opens and clicks by subscriber
+				 select top 100 * from subscriber_final;
+subscriber_key_tmp = Aggregate sends, opens & clicks by subscriber and event quarter-year
+				 select top 100 * from subscriber_key_tmp;
+subscriber_key = subscriber_key_tmp + contact approval date from contact_final. Also insert missing prior quarters for the approval year.
+				 select top 100 * from subscriber_key;
+subscriber_fix = subscriber_key with the right, averaged counts for quarters before approval quarter
+				 select top 100 * from subscriber_fix;
+sub1, sub2, sub3 = Sends, Opens, Clicks by subscriber and quarter-year
+				 select top 100 * from sub1;
+subscriber_sum = Combine sub1, sub2, sub3 to see Sends, Opens, Clicks together by subscriber and quarter-year
+				 select top 100 * from sub1;
+subscriber_summary = subscriber_sum + H1/H2 + annual ranks for Sends, Opens, Clicks, and null=0
+				 select top 100 * from subscriber_summary;
+subscriber_summary_dedup = Deduped subscriber_summary because there are same subscriberkeys (contact-id-18-digit) shared across emails (about 500 subscribers with 2 dup emails)
+				 select top 100 * from subscriber_summary_dedup; --only annual ranks for Sends, Opens, Clicks
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+
+--*********************************************************************************************************
+-- SUBSCRIBER - Count opens and clicks by subscriber - Create table SUBSCRIBER_FINAL & SUBSCRIBER_KEY_TMP
+--*********************************************************************************************************
+select count(*) from sent; --30,486,480
+-- drop table subscriber_final; --if exists
+--create table
+select * into subscriber_final from (
+select s.sendid, s.subscriberkey, s.subscriberid, s.emailaddress, CAST(s.eventdate AS DATE) as eventdate, 
+CONCAT(LEFT(DATENAME(MONTH, eventdate), 3),'_',YEAR(eventdate)) as event_month_year, o.sendid as open_sendid, o.send_opens, c.sendid as click_sendid, c.send_clicks
+from sent as s 
+left join opens_test_final as o on s.sendid = o.sendid and s.subscriberkey = o.subscriberkey and s.subscriberid = o.subscriberid and s.emailaddress = o.emailaddress
+left join clicks_final as c on o.sendid = c.sendid and o.subscriberkey = c.subscriberkey and o.subscriberid = c.subscriberid and o.emailaddress = c.emailaddress
+) as x; --30,486,480
+
+--verify
+select top 5000 * from subscriber_final where send_clicks is not null and send_clicks>2;
+Select count(*) from wdx_cohort_final where email_opt_out='true';
+
+-- drop table subscriber_key_tmp; --if exists
+-- select count(*) from subscriber_key_tmp; --2,375,721
+--create table
+select * into subscriber_key_tmp from (
+    SELECT s.subscriberkey, s.subscriberid, s.emailaddress, 
+    DATENAME(year, s.eventdate) + '_Q' + DATENAME(quarter, s.eventdate) AS period, 
+	COUNT(1) sends, 
+	SUM(CASE WHEN send_opens is not null then send_opens ELSE 0 END) opens, 
+	SUM(CASE WHEN send_clicks is not null then send_clicks ELSE 0 END) clicks 
+	FROM subscriber_final as s
+	GROUP BY s.subscriberkey, s.subscriberid, s.emailaddress, 
+    DATENAME(year, s.eventdate) + '_Q' + DATENAME(quarter, s.eventdate)) as a;
+
+--******************************************************************************************
+-- !!!!!!!!!! This can only be run after contact_final is loaded in BI_interactions_1.sql !!!!!!!!!!!!!! (DEPENDENCY)
+-- Create table SUBSCRIBER_KEY
+--******************************************************************************************
+-- drop table subscriber_key;
+-- select count(*) from subscriber_key; --2,375,721
+select * into subscriber_key from (
+select c.approval_date, DATENAME(year, c.approval_date) + '_Q' + DATENAME(quarter, c.approval_date) as approval_qtr, s.* 
+   from subscriber_key_tmp as s left join contact_final as c on s.subscriberkey = c.contact_id_18) as a;
+
+--update the stray records where users have sends/opens/clicks before or same quarter as when they are approved (incl. same quarter because data is sparse and will otherwise bias results)
+select * from subscriber_key where approval_qtr >= period;
+update subscriber_key set sends=0, opens=0, clicks=0 where approval_qtr >= period;
+
+--verify
+select distinct s.subscriberkey, s.subscriberid, s.emailaddress from subscriber_final as s; --2,375,721
+select * from subscriber_key where sends is null or opens is null or clicks is null; --0
+select count(*) from subscriber_key; --2,375,721
+select count(*) from subscriber_key where approval_date is not null; --2,349,788
+select count(*) from subscriber_key where approval_date is null; --25,933
+select * from subscriber_key where subscriberkey = '0034y00002AfUDpAAN';
+
+/*
+--couldn't do anything with this query but can be used to validate results
+--all the users with missing prior-quarters in approval year. That is, approval_qtr=Q3 2020 but period = Q1 2020 or Q2 2020 records are missing
+select distinct subscriberkey, subscriberid, emailaddress, approval_qtr, count_qtrs from (
+	select s1.*, s2.count_qtrs from subscriber_key as s1, (select subscriberkey, subscriberid, emailaddress, count(*) as count_qtrs
+									  from (
+											select s.*
+											from subscriber_key as s where substring(period,1,4) = substring(approval_qtr,1,4) 
+												and period <= approval_qtr and RIGHT(approval_qtr,1) >= 2
+												--and subscriberkey = '0034000000QwaFuAAJ' 
+											)as a group by subscriberkey, subscriberid, emailaddress) as s2
+	where s1.subscriberkey = s2.subscriberkey and s1.subscriberid = s2.subscriberid and s1.emailaddress = s2.emailaddress
+) as b
+where (RIGHT(approval_qtr,1)=1 and count_qtrs<1) or (RIGHT(approval_qtr,1)=2 and count_qtrs<2) or (RIGHT(approval_qtr,1)=3 and count_qtrs<3) or (RIGHT(approval_qtr,1)=4 and count_qtrs<4) 
+order by count_qtrs desc, subscriberkey, subscriberid, emailaddress, approval_qtr;
+*/
+
+--couldn't do anything with above query (can use it to confirm this step's success) so use this. Insert missing records for prior quarters AND same quarter. 
+-- !!!!!!!!!!!!!! Plug in each year-quarter manually and run this !!!!!!!!!!!!!! 
+INSERT INTO subscriber_key (approval_date, approval_qtr, subscriberkey, subscriberid, emailaddress, period, sends, opens, clicks)
+SELECT DISTINCT s1.approval_date, s1.approval_qtr, s1.subscriberkey, s1.subscriberid, s1.emailaddress, 
+	'2020_Q4', 0 as sends, 0 as opens, 0 as clicks
+FROM subscriber_key as s1
+WHERE NOT EXISTS (SELECT *
+                   FROM   subscriber_key as s2
+                   WHERE  s1.subscriberkey = s2.subscriberkey  and s1.subscriberid = s2.subscriberid and s1.emailaddress = s2.emailaddress 
+  AND s2.period = '2020_Q4') --does not exist
+  AND s1.approval_qtr = '2020_Q4'; --for this approval quarter
+
+--verify
+-- Make sure there are no duplicate periods records
+WITH CTE AS (
+   SELECT  subscriberkey, subscriberid, emailaddress, period,
+        Row_number() over (partition by subscriberkey, subscriberid, emailaddress, period ORDER BY subscriberkey, subscriberid, emailaddress, period)  as RN
+   FROM subscriber_key where sends = 0 and opens = 0 and clicks = 0
+) 
+select * FROM CTE WHERE RN > 1;
+
+--delete if dups
+delete from subscriber_key where approval_qtr like '2022%' and period like '2023%' and sends=0 and opens=0 and clicks=0;
+
+--******************************************************************************************
+-- Create table SUBSCRIBER_KEY_FIX
+--******************************************************************************************
+--this table will have the right, averaged counts for quarters before or same as approval quarter
+--drop table subscriber_fix;
+-- select count(*) from subscriber_fix;
+select * into subscriber_fix from (
+ select s.subscriberkey, s.subscriberid, s.emailaddress, s.period, substring(s.approval_qtr,1,4) as approval_yr, s.approval_qtr, 
+		round(avg(cast(s1.sends as float)),0) as sends, round(avg(cast(s1.opens as float)),0) as opens, round(avg(cast(s1.clicks as float)),0) as clicks
+   from  subscriber_key as s left join subscriber_key as s1 on s.subscriberkey = s1.subscriberkey and s.emailaddress = s1.emailaddress
+  where s.period <= s.approval_qtr and substring(s.approval_qtr,1,4) = substring(s.period,1,4) --same year, quarters before or same as approval qtr
+    and  s1.period > s1.approval_qtr and substring(s1.approval_qtr,1,4) = substring(s1.period,1,4) --same year, quarters after approval qtr
+	 -- and s1.subscriberkey = '0033300001e7MRPAA2'
+ group by s.subscriberkey,  s.subscriberid, s.emailaddress, s.period, substring(s.approval_qtr,1,4), s.approval_qtr) as a; 
+-- select * from subscriber_fix; 
+
+--now use the fix table to update
+UPDATE A
+SET A.sends = B.sends, A.opens = B.opens, A.clicks = B.clicks
+FROM subscriber_key as A
+JOIN subscriber_fix as B
+    ON A.subscriberkey = B.subscriberkey and A.subscriberid = B.subscriberid and A.emailaddress = B.emailaddress 
+	   and A.approval_qtr = B.approval_qtr and A.approval_qtr = B.approval_qtr and A.period = B.period;
+	     
+--******************************************************************************************
+-- Create table SUBSCRIBER_SUM
+--******************************************************************************************
+-- drop table sub1;
+select * into sub1 from (
+select subscriberkey, subscriberid, emailaddress, approval_date, approval_qtr,
+			[2020_Q1] as "sends_2020_Q1",[2020_Q2] as "sends_2020_Q2",[2020_Q3] as "sends_2020_Q3",[2020_Q4] as "sends_2020_Q4",
+			[2021_Q1] as "sends_2021_Q1",[2021_Q2] as "sends_2021_Q2",[2021_Q3] as "sends_2021_Q3",[2021_Q4] as "sends_2021_Q4",
+			[2022_Q1] as "sends_2022_Q1",[2022_Q2] as "sends_2022_Q2",[2022_Q3] as "sends_2022_Q3",[2022_Q4] as "sends_2022_Q4",
+			[2023_Q1] as "sends_2023_Q1",[2023_Q2] as "sends_2023_Q2",[2023_Q3] as "sends_2023_Q3" 
+from (select subscriberkey, subscriberid, emailaddress, approval_date, approval_qtr, period, sends from subscriber_key) d
+pivot (max(sends) for period in ([2020_Q1],[2020_Q2],[2020_Q3],[2020_Q4],[2021_Q1],[2021_Q2],[2021_Q3],[2021_Q4],[2022_Q1],[2022_Q2],[2022_Q3],[2022_Q4],[2023_Q1],[2023_Q2],[2023_Q3])) as piv) as a;
+
+-- drop table sub2;
+select * into sub2 from (
+select subscriberkey, subscriberid, emailaddress, approval_date, approval_qtr, 
+			[2020_Q1] as "opens_2020_Q1",[2020_Q2] as "opens_2020_Q2",[2020_Q3] as "opens_2020_Q3",[2020_Q4] as "opens_2020_Q4",
+			[2021_Q1] as "opens_2021_Q1",[2021_Q2] as "opens_2021_Q2",[2021_Q3] as "opens_2021_Q3",[2021_Q4] as "opens_2021_Q4",
+			[2022_Q1] as "opens_2022_Q1",[2022_Q2] as "opens_2022_Q2",[2022_Q3] as "opens_2022_Q3",[2022_Q4] as "opens_2022_Q4",
+			[2023_Q1] as "opens_2023_Q1",[2023_Q2] as "opens_2023_Q2",[2023_Q3] as "opens_2023_Q3" 
+from (select subscriberkey, subscriberid, emailaddress, approval_date, approval_qtr, period, opens from subscriber_key) d
+pivot (max(opens) for period in ([2020_Q1],[2020_Q2],[2020_Q3],[2020_Q4],[2021_Q1],[2021_Q2],[2021_Q3],[2021_Q4],[2022_Q1],[2022_Q2],[2022_Q3],[2022_Q4],[2023_Q1],[2023_Q2],[2023_Q3])) as piv) as a;
+
+-- drop table sub3;
+select * into sub3 from (
+select subscriberkey, subscriberid, emailaddress, approval_date, approval_qtr, 
+			[2020_Q1] as "clicks_2020_Q1",[2020_Q2] as "clicks_2020_Q2",[2020_Q3] as "clicks_2020_Q3",[2020_Q4] as "clicks_2020_Q4",
+			[2021_Q1] as "clicks_2021_Q1",[2021_Q2] as "clicks_2021_Q2",[2021_Q3] as "clicks_2021_Q3",[2021_Q4] as "clicks_2021_Q4",
+			[2022_Q1] as "clicks_2022_Q1",[2022_Q2] as "clicks_2022_Q2",[2022_Q3] as "clicks_2022_Q3",[2022_Q4] as "clicks_2022_Q4",
+			[2023_Q1] as "clicks_2023_Q1",[2023_Q2] as "clicks_2023_Q2",[2023_Q3] as "clicks_2023_Q3" 
+from (select subscriberkey, subscriberid, emailaddress, approval_date, approval_qtr, period, clicks from subscriber_key) d
+pivot (max(clicks) for period in ([2020_Q1],[2020_Q2],[2020_Q3],[2020_Q4],[2021_Q1],[2021_Q2],[2021_Q3],[2021_Q4],[2022_Q1],[2022_Q2],[2022_Q3],[2022_Q4],[2023_Q1],[2023_Q2],[2023_Q3])) as piv) as a;
+
+-- drop table subscriber_sum;
+select * into subscriber_sum from (
+select s1.subscriberkey, s2.subscriberid, s3.emailaddress, s1.approval_date, s1.approval_qtr,
+sends_2020_Q1, sends_2020_Q2, sends_2020_Q3, sends_2020_Q4, sends_2021_Q1, sends_2021_Q2, sends_2021_Q3, sends_2021_Q4, 
+sends_2022_Q1, sends_2022_Q2, sends_2022_Q3, sends_2022_Q4, sends_2023_Q1, sends_2023_Q2, sends_2023_Q3,
+opens_2020_Q1, opens_2020_Q2, opens_2020_Q3, opens_2020_Q4, opens_2021_Q1, opens_2021_Q2, opens_2021_Q3, opens_2021_Q4, 
+opens_2022_Q1, opens_2022_Q2, opens_2022_Q3, opens_2022_Q4, opens_2023_Q1, opens_2023_Q2, opens_2023_Q3,
+clicks_2020_Q1, clicks_2020_Q2, clicks_2020_Q3, clicks_2020_Q4, clicks_2021_Q1, clicks_2021_Q2, clicks_2021_Q3, clicks_2021_Q4, 
+clicks_2022_Q1, clicks_2022_Q2, clicks_2022_Q3, clicks_2022_Q4, clicks_2023_Q1, clicks_2023_Q2, clicks_2023_Q3
+from sub1 as s1 
+	left join sub2 as s2 on s1.subscriberkey = s2.subscriberkey and s1.subscriberid = s2.subscriberid and s1.emailaddress = s2.emailaddress 
+	left join sub3 as s3 on s1.subscriberkey = s3.subscriberkey and s1.subscriberid = s3.subscriberid and s1.emailaddress = s3.emailaddress) as x;
+-- select top 10 * from subscriber_sum;
+
+drop table sub1;--213,427
+drop table sub2;--213,427
+drop table sub3;--213,427
+
+select count(*) from subscriber_sum;  --213,427 
+
+--******************************************************************************************
+-- Create table SUBSCRIBER_SUMMARY
+--******************************************************************************************
+-- drop table subscriber_summary;
+select * into subscriber_summary from (
+select s.*,
+(isnull(s.sends_2020_Q1,0) + isnull(s.sends_2020_Q2,0)) as sends_2020_H1, 
+(isnull(s.sends_2020_Q3,0) + isnull(s.sends_2020_Q4,0)) as sends_2020_H2, 
+(isnull(s.sends_2021_Q1,0) + isnull(s.sends_2021_Q2,0)) as sends_2021_H1, 
+(isnull(s.sends_2021_Q3,0) + isnull(s.sends_2021_Q4,0)) as sends_2021_H2, 
+(isnull(s.sends_2022_Q1,0) + isnull(s.sends_2022_Q2,0)) as sends_2022_H1, 
+(isnull(s.sends_2022_Q3,0) + isnull(s.sends_2022_Q4,0)) as sends_2022_H2, 
+(isnull(s.sends_2023_Q1,0) + isnull(s.sends_2023_Q2,0)) as sends_2023_H1, 
+(isnull(s.sends_2023_Q3,0)) as sends_2023_H2,
+(isnull(s.sends_2020_Q1,0) + isnull(s.sends_2020_Q2,0) + isnull(s.sends_2020_Q3,0) + isnull(s.sends_2020_Q4,0)) as sends_2020, 
+(isnull(s.sends_2021_Q1,0) + isnull(s.sends_2021_Q2,0) + isnull(s.sends_2021_Q3,0) + isnull(s.sends_2021_Q4,0)) as sends_2021,
+(isnull(s.sends_2022_Q1,0) + isnull(s.sends_2022_Q2,0) + isnull(s.sends_2022_Q3,0) + isnull(s.sends_2022_Q4,0)) as sends_2022,
+(isnull(s.sends_2023_Q1,0) + isnull(s.sends_2023_Q2,0) + isnull(s.sends_2023_Q3,0)) as sends_2023,
+(isnull(s.opens_2020_Q1,0) + isnull(s.opens_2020_Q2,0)) as opens_2020_H1, 
+(isnull(s.opens_2020_Q3,0) + isnull(s.opens_2020_Q4,0)) as opens_2020_H2, 
+(isnull(s.opens_2021_Q1,0) + isnull(s.opens_2021_Q2,0)) as opens_2021_H1, 
+(isnull(s.opens_2021_Q3,0) + isnull(s.opens_2021_Q4,0)) as opens_2021_H2, 
+(isnull(s.opens_2022_Q1,0) + isnull(s.opens_2022_Q2,0)) as opens_2022_H1, 
+(isnull(s.opens_2022_Q3,0) + isnull(s.opens_2022_Q4,0)) as opens_2022_H2, 
+(isnull(s.opens_2023_Q1,0) + isnull(s.opens_2023_Q2,0)) as opens_2023_H1, 
+(isnull(s.opens_2023_Q3,0)) as opens_2023_H2,
+(isnull(s.opens_2020_Q1,0) + isnull(s.opens_2020_Q2,0) + isnull(s.opens_2020_Q3,0) + isnull(s.opens_2020_Q4,0)) as opens_2020, 
+(isnull(s.opens_2021_Q1,0) + isnull(s.opens_2021_Q2,0) + isnull(s.opens_2021_Q3,0) + isnull(s.opens_2021_Q4,0)) as opens_2021,
+(isnull(s.opens_2022_Q1,0) + isnull(s.opens_2022_Q2,0) + isnull(s.opens_2022_Q3,0) + isnull(s.opens_2022_Q4,0)) as opens_2022,
+(isnull(s.opens_2023_Q1,0) + isnull(s.opens_2023_Q2,0) + isnull(s.opens_2023_Q3,0)) as opens_2023,
+(isnull(s.clicks_2020_Q1,0) + isnull(s.clicks_2020_Q2,0)) as clicks_2020_H1, 
+(isnull(s.clicks_2020_Q3,0) + isnull(s.clicks_2020_Q4,0)) as clicks_2020_H2, 
+(isnull(s.clicks_2021_Q1,0) + isnull(s.clicks_2021_Q2,0)) as clicks_2021_H1, 
+(isnull(s.clicks_2021_Q3,0) + isnull(s.clicks_2021_Q4,0)) as clicks_2021_H2, 
+(isnull(s.clicks_2022_Q1,0) + isnull(s.clicks_2022_Q2,0)) as clicks_2022_H1, 
+(isnull(s.clicks_2022_Q3,0) + isnull(s.clicks_2022_Q4,0)) as clicks_2022_H2, 
+(isnull(s.clicks_2023_Q1,0) + isnull(s.clicks_2023_Q2,0)) as clicks_2023_H1, 
+(isnull(s.clicks_2023_Q3,0)) as clicks_2023_H2,
+(isnull(s.clicks_2020_Q1,0) + isnull(s.clicks_2020_Q2,0) + isnull(s.clicks_2020_Q3,0) + isnull(s.clicks_2020_Q4,0)) as clicks_2020, 
+(isnull(s.clicks_2021_Q1,0) + isnull(s.clicks_2021_Q2,0) + isnull(s.clicks_2021_Q3,0) + isnull(s.clicks_2021_Q4,0)) as clicks_2021,
+(isnull(s.clicks_2022_Q1,0) + isnull(s.clicks_2022_Q2,0) + isnull(s.clicks_2022_Q3,0) + isnull(s.clicks_2022_Q4,0)) as clicks_2022,
+(isnull(s.clicks_2023_Q1,0) + isnull(s.clicks_2023_Q2,0) + isnull(s.clicks_2023_Q3,0)) as clicks_2023 from subscriber_sum as s) as y;
+
+--!!!!!!!!!!!!!!!
+--drop table
+drop table subscriber_sum;
+
+--verify
+SELECT * FROM subscriber_summary;
+SELECT TOP 10 * FROM subscriber_summary;
+select * from subscriber_summary;
+
+select * from subscriber_final where emailaddress = 'xxxxxxxx@gmail.com'
+and eventdate>='2020-01-01' AND  eventdate<='2020-03-31'
+order by event_month_year;
+
+select * from sub1 where emailaddress = 'xxxxxxxx3@gmail.com';
+select * from sub2 where emailaddress = 'xxxxxxxx3@gmail.com';  
+select * from sub3 where emailaddress = 'xxxxxxxx3@gmail.com';
+select * from subscriber_summary where emailaddress = 'xxxxxxxx3@gmail.com';
+
+select sends_2020_Q1, opens_2020_Q1, clicks_2020_Q1 from subscriber_summary where emailaddress = 'xxxxxxxx@gmail.com';
+ 
