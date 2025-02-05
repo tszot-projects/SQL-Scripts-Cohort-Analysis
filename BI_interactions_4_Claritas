@@ -1,0 +1,102 @@
+/* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+CLARITAS_CODING_SEP2023 = Table for Claritas coding of top engaged warriors & FSMs
+claritas_sep_2023 = CLARITAS_CODING_SEP2023 joined to contact_addr table to get address data points
+claritas_cohort = Segment names from file coded in Claritas
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+drop view CLARITAS_CODING_SEP2023;
+create view CLARITAS_CODING_SEP2023 as
+--Approved in 2023
+select * from (
+--approved in 2023 and have a good level of activity
+select * from wdx_cohort_final where approval_date>='2023-01-01' and email_opt_out ='False' and active_6months = 'Y'
+and (final_rank like '3%' or final_rank like '4%')
+ union 
+--approved before 2023 and have a good level of activity in 2023 and 2022
+select * from wdx_cohort_final where approval_date<'2023-01-01' and email_opt_out ='False' and active_6months = 'Y'
+and (final_rank like '44%' or final_rank like '43%' or final_rank like '34%')) as x;
+--where contact_record_type = 'Alumni Contact'; --13,484 for all, 11,907 for alumni contacts
+ 
+--Claritas codes 28 Sep 2023 --13,422 records
+select * into claritas_sep_2023 from (
+select distinct c.contact_id_18, ca.addr1, ca.addr2, ca.city, ca.state, ca.zipcode, 
+c.contact_type, c.contact_record_type, c.email, c.first_name, c.last_name, c.created_date, c.approval_date, c.approval_qtr, c.email_opt_out, c.active_6months, c.final_rank 
+from CLARITAS_CODING_SEP2023 as c, contact_addr as ca
+where c.contact_id_18 = ca.contact_id_18 --and c.contact_type = ca.contact_type and c.contact_record_type = ca.contact_record_type
+and c.wwp_status = 'Approved' 
+--and (ca.addr1 is null or ca.city is null or ca.state is null or ca.zipcode is null);
+and ca.addr1 is not null and ca.city is not null and ca.state is not null and ca.zipcode is not null
+) as x; --order by final_rank desc
+
+--select distinct addr1, city, state, zipcode, count(*) from claritas_sep_2023 group by  addr1, city, state, zipcode order by count(*) desc;  --1000+ dups, wasted credits ugh
+-- Contacts most active in 2023 and their approval quarter 	
+select w.approval_qtr, count(distinct w.contact_id_18) 
+from wdx_cohort_final as w 
+where w.email_opt_out ='False' and w.active_6months = 'Y'
+and (w.final_rank like '3%' or w.final_rank like '4%')
+group by w.approval_qtr order by w.approval_qtr desc;
+
+--Claritas coded. Contacts most active in 2023 AND 2022, approved in 2023 and have a good level of activity OR approved before 2023 and have a good level of activity in 2023 and 2022
+select w.approval_qtr, count(distinct w.contact_id_18)  
+from CLARITAS_CODING_SEP2023 as w
+group by w.approval_qtr order by w.approval_qtr desc;
+
+-- Approved whenever
+select distinct contact_id_18, email, contact_record_type from ( 
+--approved in 2023 but still have good level of activity
+select * from wdx_cohort_final where wwp_status = 'Approved' and email_opt_out ='False' and active_6months = 'Y' --!!!!!!!!!! 31,832
+and (final_rank like '4%' or final_rank like '3%')) as x;
+--where contact_record_type = 'Alumni Contact'; --31,832 for all, 27,501 for alumni contacts
+ 
+select * from wdx_cohort_final;
+--CHECK RANK, VERIFY
+ select distinct s.subscriberkey, sends, opens, clicks, final_rank, round((opens/sends)*100,1)
+from subscriber_key_tmp as s, wdx_cohort_final as w where s.subscriberkey = w.contact_id_18 
+and w.approval_qtr IN ('2023_Q1', '2023_Q2') --AND period = '2023_Q1'
+and  email_opt_out ='False' and active_6months = 'Y'
+--and (final_rank not like '3%' and final_rank not like '4%');
+and (final_rank like '3%' or final_rank like '4%');
+
+select distinct w.*, c.match_flag,
+c.pzp_zp6_seg_id, c.pzp_zp6_seg_name, c.pzp_zp6_lifestage_group_alias,
+c.pzp_zp6_lifestage_group_name, c.pzp_zp6_social_group_alias, c.pzp_zp6_social_group_name 
+from claritas_cohort as c, claritas_sep_2023 as w
+where c.u_addr1 = w.addr1 and c.u_city = w.city and c.u_state = w.state and c.u_zipcode = w.zipcode;
+ 
+select * from contact_final as c, contact_addr as c1 
+where c.contact_id_18=c1.contact_id_18;
+--and age_of_contact>200;
+
+select state, count(distinct c1.contact_id_18) from contact_final as c, contact_addr as c1 
+where c.contact_id_18=c1.contact_id_18
+group by state order by count(distinct c1.contact_id_18) desc;
+
+select age_of_contact, count(distinct c1.contact_id_18) from contact_final as c, contact_addr as c1 
+where c.contact_id_18=c1.contact_id_18 and c1.age_of_contact>=18 and c1.age_of_contact <=80
+group by age_of_contact order by age_of_contact, count(distinct c1.contact_id_18) desc;
+
+select age_category, count(distinct contact_id_18) from (
+select c1.contact_id_18, case 
+when age_of_contact between 18 and 25 then '18-25'
+when age_of_contact between 26 and 35 then '26-35'
+when age_of_contact between 36 and 45 then '36-45'
+when age_of_contact between 46 and 55 then '46-55'
+when age_of_contact between 56 and 65 then '56-65'
+when age_of_contact between 66 and 80 then '66-80' end as age_category
+from contact_final as c, contact_addr as c1 
+where c.contact_id_18=c1.contact_id_18 and c1.age_of_contact>=18 and c1.age_of_contact <=80) as x
+group by age_category order by age_category, count(distinct contact_id_18) desc;
+
+ --all no email
+ select distinct email from (
+ select c.*, c1.contact_id_18 as contact_18 from contact_addr as c left join contact_final as c1 on c.contact_id_18=c1.contact_id_18
+ ) as x where x.contact_18 is null;
+
+select final_rank from wdx_cohort_final where subscriberkey='0034y00002kHVbbAAG';
+select * from subscriber_key_tmp where subscriberkey='0034y00002kHVbbAAG';
+select * from campaign where contact_id_18='0034y00002kHVbbAAG';
+select * from interaction where contact_id='0034y00002kHVbbAAG';
+
+select final_rank from wdx_cohort_final where subscriberkey='0034y00002oCSYNAA4';
+select * from subscriber_key_tmp where subscriberkey='0034y00002oCSYNAA4';
+select * from campaign where contact_id_18='0034y00002oCSYNAA4';
+select * from interaction where contact_id ='0034y00002oCSYNAA4';
