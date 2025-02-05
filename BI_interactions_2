@@ -1,0 +1,397 @@
+--******************************************************************************************
+-- !!!!!!!!!!!! INTERACTIONS !!!!!!!!!!!!!!!!!!
+--******************************************************************************************
+
+/* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+interaction_0 = Sum interactions by quarter-year
+				select top 100 * from interaction_0;
+interaction_1 = Sum interactions by quarter-year + contact approval date from contact_final
+				select top 100 * from interaction_1;
+interaction_1 = Sum interactions by quarter-year + contact approval date from contact_final. Also insert missing prior quarters for the approval year.
+				select top 100 * from interaction_1;
+interaction_fix = interaction_1 with the right, averaged counts for quarters before approval quarter
+				select top 100 * from interaction_fix;
+interaction_2 = interactions by subscriber and quarter-year
+				select top 100 * from interaction_2;
+interaction_summary = subscriber_sum + H1/H2 + annual ranks for interactions, and null=0
+				select top 100 * from interaction_summary;
+
+campaign_0 = Sum campaigns by quarter-year
+				select top 100 * from campaign_0;
+campaign_1 = Sum campaigns by quarter-year + contact approval date from contact_final
+				select top 100 * from campaign_1;
+campaign_1 = Sum campaigns by quarter-year + contact approval date from contact_final. Also insert missing prior quarters for the approval year.
+				select top 100 * from campaign_1;
+campaign_fix = campaign_1 with the right, averaged counts for quarters before approval quarter
+				select top 100 * from campaign_fix;
+campaign_2 = campaigns by subscriber and quarter-year
+				select top 100 * from campaign_2;
+campaign_summary = subscriber_sum + H1/H2 + annual ranks for campaigns, and null=0
+				select top 100 * from campaign_summary;
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+
+
+--******************************************************************************************
+-- Create table INTERACTION_0, INTERACTION_1
+--******************************************************************************************
+-- drop table interaction_0;
+select * into interaction_0 from (
+     SELECT s.contact_id,
+   DATENAME(year, s.interaction_date) + '_Q' + DATENAME(quarter, s.interaction_date) AS period,
+   count(interaction_id) as interactions
+   FROM interaction_final as s
+   GROUP BY s.contact_id,
+   DATENAME(year, s.interaction_date) + '_Q' + DATENAME(quarter, s.interaction_date) ) as a;
+--select count(*) from interaction_0;
+-- select top 10 * from interaction_0;
+
+-- drop table interaction_1;
+select * into interaction_1 from (
+select c.approval_date, DATENAME(year, c.approval_date) + '_Q' + DATENAME(quarter, c.approval_date) as approval_qtr, s.* 
+   from interaction_0 as s left join contact_final as c on s.contact_id = c.contact_id_18) as a;
+--select count(*) from interaction_1;
+-- select top 10 * from interaction_1;
+
+--update the stray records where users have interactions before or same quarter as when they are approved (incl. same quarter because data is sparse and will otherwise bias results)
+select * from interaction_1 where approval_qtr >= period;
+update interaction_1 set interactions=0 where approval_qtr >= period;
+
+/*
+--couldn't do anything with this query but can be used to validate results
+--all the users with missing prior-quarters in approval year. That is, approval_qtr=Q3 2020 but period = Q1 2020 or Q2 2020 records are missing
+select distinct contact_id, approval_qtr, count_qtrs from (
+	select s1.*, s2.count_qtrs from interaction_1 as s1, (select contact_id, count(*) as count_qtrs
+									  from (
+											select s.*
+											from interaction_1 as s where substring(period,1,4) = substring(approval_qtr,1,4) 
+												and period <= approval_qtr and RIGHT(approval_qtr,1) >= 2 --and contact_id = '0034000000QwaFuAAJ' 
+											)as a group by contact_id) as s2
+	where s1.contact_id = s2.contact_id
+) as b
+where (RIGHT(approval_qtr,1)=1 and count_qtrs<1) or (RIGHT(approval_qtr,1)=2 and count_qtrs<2) or (RIGHT(approval_qtr,1)=3 and count_qtrs<3) or (RIGHT(approval_qtr,1)=4 and count_qtrs<4) 
+order by count_qtrs desc, contact_id, approval_qtr; 
+*/
+
+--couldn't do anything with above query (can use it to confirm this step's success). Insert missing records for prior quarters AND same quarter. 
+-- !!!!!!!!!!!!!! Plug in each year-quarter manually and run this !!!!!!!!!!!!!! 
+INSERT INTO interaction_1 (approval_date, approval_qtr, contact_id, period, interactions)
+SELECT DISTINCT s1.approval_date, s1.approval_qtr, s1.contact_id, 
+	'2022_Q2', 0 as interactions
+FROM interaction_1 as s1
+WHERE NOT EXISTS (SELECT *
+                   FROM   interaction_1 as s2
+                   WHERE  s1.contact_id = s2.contact_id 
+  AND s2.period = '2022_Q2') --does not exist
+  AND s1.approval_qtr = '2022_Q2'; --for this approval quarter
+
+--verify
+-- Make sure there are no duplicate periods records
+WITH CTE AS (
+   SELECT  contact_id, period,
+        Row_number() over (partition by contact_id, period ORDER BY contact_id, period)  as RN
+   FROM interaction_1 where interactions = 0
+) 
+select * FROM CTE WHERE RN > 1;
+
+ --delete if dups
+-- delete from interaction_1 where approval_qtr like '2022%' and period like '2023%' and interactions=0;
+ 
+--******************************************************************************************
+-- Create table INTERACTION_FIX
+--******************************************************************************************
+--this table will have the right, averaged counts for quarters before or same as approval quarter
+--drop table interaction_fix;
+-- select count(*) from interaction_fix;
+select * into interaction_fix from (
+ select s.contact_id, s.period, substring(s.approval_qtr,1,4) as approval_yr, s.approval_qtr, 
+		round(avg(cast(s1.interactions as float)),0) as interactions 
+   from  interaction_1 as s left join interaction_1 as s1 on s.contact_id = s1.contact_id
+  where s.period <= s.approval_qtr and substring(s.approval_qtr,1,4) = substring(s.period,1,4) --same year, quarters before or same as approval qtr
+    and  s1.period > s1.approval_qtr and substring(s1.approval_qtr,1,4) = substring(s1.period,1,4) --same year, quarters after approval qtr
+	   -- and s1.contact_id = '0033300001e7MRPAA2'
+ group by s.contact_id, s.period, substring(s.approval_qtr,1,4), s.approval_qtr ) as a; 
+-- select * from interaction_fix; 
+-- select * from interaction_1 where contact_id = '0033300001e7MRPAA2'; 
+
+--now use the fix table to update
+UPDATE A
+SET A.interactions = B.interactions
+FROM interaction_1 as A
+JOIN interaction_fix as B
+    ON A.contact_id = B.contact_id 
+	   and A.approval_qtr = B.approval_qtr and A.approval_qtr = B.approval_qtr and A.period = B.period;
+	   
+--******************************************************************************************
+-- Create table INTERACTION_2
+--******************************************************************************************
+--drop table interaction_2;
+-- select count(*) from interaction_2;
+select * into interaction_2 from (
+select contact_id,approval_date, approval_qtr,
+			[2020_Q1] as "interactions_2020_Q1",[2020_Q2] as "interactions_2020_Q2",[2020_Q3] as "interactions_2020_Q3",[2020_Q4] as "interactions_2020_Q4",
+			[2021_Q1] as "interactions_2021_Q1",[2021_Q2] as "interactions_2021_Q2",[2021_Q3] as "interactions_2021_Q3",[2021_Q4] as "interactions_2021_Q4",
+			[2022_Q1] as "interactions_2022_Q1",[2022_Q2] as "interactions_2022_Q2",[2022_Q3] as "interactions_2022_Q3",[2022_Q4] as "interactions_2022_Q4",
+			[2023_Q1] as "interactions_2023_Q1",[2023_Q2] as "interactions_2023_Q2",[2023_Q3] as "interactions_2023_Q3" 
+from (select contact_id, period, interactions,approval_date, approval_qtr from interaction_1) d
+pivot (max(interactions) for period in ([2020_Q1],[2020_Q2],[2020_Q3],[2020_Q4],[2021_Q1],[2021_Q2],[2021_Q3],[2021_Q4],[2022_Q1],[2022_Q2],[2022_Q3],[2022_Q4],[2023_Q1],[2023_Q2],[2023_Q3])) as piv) as a;
+
+--******************************************************************************************
+-- Create table INTERACTION_SUMMARY
+--******************************************************************************************
+-- select count(*) from interaction_summary;
+-- drop table interaction_summary;
+select * into interaction_summary from (
+select s.*,
+(isnull(s.interactions_2020_Q1,0) + isnull(s.interactions_2020_Q2,0)) as interactions_2020_H1, 
+(isnull(s.interactions_2020_Q3,0) + isnull(s.interactions_2020_Q4,0)) as interactions_2020_H2, 
+(isnull(s.interactions_2021_Q1,0) + isnull(s.interactions_2021_Q2,0)) as interactions_2021_H1, 
+(isnull(s.interactions_2021_Q3,0) + isnull(s.interactions_2021_Q4,0)) as interactions_2021_H2, 
+(isnull(s.interactions_2022_Q1,0) + isnull(s.interactions_2022_Q2,0)) as interactions_2022_H1, 
+(isnull(s.interactions_2022_Q3,0) + isnull(s.interactions_2022_Q4,0)) as interactions_2022_H2, 
+(isnull(s.interactions_2023_Q1,0) + isnull(s.interactions_2023_Q2,0)) as interactions_2023_H1, 
+(isnull(s.interactions_2023_Q3,0)) as interactions_2023_H2,
+(isnull(s.interactions_2020_Q1,0) + isnull(s.interactions_2020_Q2,0) + isnull(s.interactions_2020_Q3,0) + isnull(s.interactions_2020_Q4,0)) as interactions_2020, 
+(isnull(s.interactions_2021_Q1,0) + isnull(s.interactions_2021_Q2,0) + isnull(s.interactions_2021_Q3,0) + isnull(s.interactions_2021_Q4,0)) as interactions_2021,
+(isnull(s.interactions_2022_Q1,0) + isnull(s.interactions_2022_Q2,0) + isnull(s.interactions_2022_Q3,0) + isnull(s.interactions_2022_Q4,0)) as interactions_2022,
+(isnull(s.interactions_2023_Q1,0) + isnull(s.interactions_2023_Q2,0) + isnull(s.interactions_2023_Q3,0)) as interactions_2023
+from interaction_2 as s) as y;
+--select * from interaction_summary where contact_id = '0033300001e7hEPAAY' and interaction_date between '2020-07-01' and '2020-09-30';
+
+alter table interaction_summary add interaction_rank_2023 int;
+alter table interaction_summary add interaction_rank_2022 int;
+alter table interaction_summary add interaction_rank_2021 int;
+alter table interaction_summary add interaction_rank_2020 int;
+
+--******************************************************************************************
+--!!!!!!!! INTERACTIONS RANKING !!!!!!!!
+--******************************************************************************************
+select distinct interactions_2023, nrank, count(*) from (SELECT interactions_2023, 1+(rank() over (order by interactions_2023)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from interaction_summary where interactions_2023 > 0) as x group by interactions_2023, nrank order by nrank desc, interactions_2023 desc;
+select distinct interactions_2022, nrank, count(*) from (SELECT interactions_2022, 1+(rank() over (order by interactions_2022)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from interaction_summary where interactions_2022 > 0) as x group by interactions_2022, nrank order by nrank desc, interactions_2022 desc;
+select distinct interactions_2021, nrank, count(*) from (SELECT interactions_2021, 1+(rank() over (order by interactions_2021)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from interaction_summary where interactions_2021 > 0) as x group by interactions_2021, nrank order by nrank desc, interactions_2021 desc;
+select distinct interactions_2020, nrank, count(*) from (SELECT interactions_2020, 1+(rank() over (order by interactions_2020)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from interaction_summary where interactions_2020 > 0) as x group by interactions_2020, nrank order by nrank desc, interactions_2020 desc;
+
+update interaction_summary set interaction_rank_2023 = 1 where interactions_2023 <= 0;
+update interaction_summary set interaction_rank_2023 = 2 where interactions_2023 between 1 and 2;
+update interaction_summary set interaction_rank_2023 = 3 where interactions_2023 between 3 and 7;
+update interaction_summary set interaction_rank_2023 = 4 where interactions_2023 >= 8; 
+
+update interaction_summary set interaction_rank_2022 = 1 where interactions_2022 <= 0;
+update interaction_summary set interaction_rank_2022 = 2 where interactions_2022 between 1 and 2;
+update interaction_summary set interaction_rank_2022 = 3 where interactions_2022 between 3 and 10;
+update interaction_summary set interaction_rank_2022 = 4 where interactions_2022 >= 11; 
+
+update interaction_summary set interaction_rank_2021 = 1 where interactions_2021 <= 0;
+update interaction_summary set interaction_rank_2021 = 2 where interactions_2021 between 1 and 2;
+update interaction_summary set interaction_rank_2021 = 3 where interactions_2021 between 3 and 10;
+update interaction_summary set interaction_rank_2021 = 4 where interactions_2021 >= 11; 
+
+update interaction_summary set interaction_rank_2020 = 1 where interactions_2020 <= 0;
+update interaction_summary set interaction_rank_2020 = 2 where interactions_2020 between 1 and 2;
+update interaction_summary set interaction_rank_2020 = 3 where interactions_2020 between 3 and 9;
+update interaction_summary set interaction_rank_2020 = 4 where interactions_2020 >= 10; 
+
+select interaction_rank_2023, count(*) from interaction_summary group by interaction_rank_2023 order by interaction_rank_2023;
+select interaction_rank_2022, count(*) from interaction_summary group by interaction_rank_2022 order by interaction_rank_2022;
+select interaction_rank_2021, count(*) from interaction_summary group by interaction_rank_2021 order by interaction_rank_2021;
+select interaction_rank_2020, count(*) from interaction_summary group by interaction_rank_2020 order by interaction_rank_2020;
+
+--select * from interaction_summary where interaction_rank_2023 is null;
+--select * from interaction_summary where interaction_rank_2023 is null or interaction_rank_2022 is null or interaction_rank_2021 is null or interaction_rank_2020 is null;
+--select * from interaction_summary where interactions_2023=0 or interactions_2022=0 or interactions_2021=0 or interactions_2020=0;
+
+
+--******************************************************************************************
+-- !!!!!!!!!!!! CAMPAIGNS !!!!!!!!!!!!!!!!!!
+--******************************************************************************************
+
+--******************************************************************************************
+-- Create table CAMPAIGN_0, CAMPAIGN_1
+--******************************************************************************************
+-- select datediff(day, start_date, end_date), count(*) from campaign group by datediff(day, start_date, end_date) order by datediff(day, start_date, end_date);
+-- select * from campaign where datediff(day, start_date, end_date) > 91;
+-- drop table campaign_0; drop table campaign_1; drop table campaign_2; drop table campaign_summary; 
+-- select * from campaign_0;
+select * into campaign_0 from (
+     SELECT s.contact_id_18,
+   DATENAME(year, s.start_date) + '_Q' + DATENAME(quarter, s.start_date) AS period, count(campaign_id) as campaigns
+   FROM campaign_final as s
+   GROUP BY s.contact_id_18,
+   DATENAME(year, s.start_date) + '_Q' + DATENAME(quarter, s.start_date) ) as a;
+
+-- drop table campaign_1;
+select * into campaign_1 from (
+select c.approval_date, DATENAME(year, c.approval_date) + '_Q' + DATENAME(quarter, c.approval_date) as approval_qtr, s.* 
+   from campaign_0 as s left join contact_final as c on s.contact_id_18 = c.contact_id_18) as a;
+--select count(*) from campaign_1;
+-- select top 10 * from campaign_1;
+
+--update the stray records where users have campaigns before or same quarter as when they are approved (incl. same quarter because data is sparse and will otherwise bias results)
+select * from campaign_1 where approval_qtr >= period;
+update campaign_1 set campaigns=0 where approval_qtr >= period;
+
+/*
+--couldn't do anything with this query but can be used to validate results
+--all the users with missing prior-quarters in approval year. That is, approval_qtr=Q3 2020 but period = Q1 2020 or Q2 2020 records are missing
+select distinct contact_id_18, approval_qtr, count_qtrs from (
+	select s1.*, s2.count_qtrs from campaign_1 as s1, (select contact_id_18, count(*) as count_qtrs
+									  from (
+											select s.*
+											from campaign_1 as s where substring(period,1,4) = substring(approval_qtr,1,4) 
+												and period <= approval_qtr and RIGHT(approval_qtr,1) >= 2 --and contact_id_18 = '0034000000QwaFuAAJ' 
+											)as a group by contact_id_18) as s2
+	where s1.contact_id_18 = s2.contact_id_18
+) as b
+where (RIGHT(approval_qtr,1)=1 and count_qtrs<1) or (RIGHT(approval_qtr,1)=2 and count_qtrs<2) or (RIGHT(approval_qtr,1)=3 and count_qtrs<3) or (RIGHT(approval_qtr,1)=4 and count_qtrs<4) 
+order by count_qtrs desc, contact_id_18, approval_qtr;
+*/
+
+--couldn't do anything with above query (can use it to confirm this step's success). Insert missing records for prior quarters AND same quarter. 
+-- !!!!!!!!!!!!!! Plug in each year-quarter manually and run this !!!!!!!!!!!!!! 
+INSERT INTO campaign_1 (approval_date, approval_qtr, contact_id_18, period, campaigns)
+SELECT DISTINCT s1.approval_date, s1.approval_qtr, s1.contact_id_18, 
+	'2022_Q4', 0 as campaigns
+FROM campaign_1 as s1
+WHERE NOT EXISTS (SELECT *
+                   FROM   campaign_1 as s2
+                   WHERE  s1.contact_id_18 = s2.contact_id_18 
+  AND s2.period = '2022_Q4') --does not exist
+  AND s1.approval_qtr = '2022_Q4'; --for this approval quarter
+
+
+-- Make sure there are no duplicate periods records
+WITH CTE AS (
+   SELECT  contact_id_18, period,
+        Row_number() over (partition by contact_id_18, period ORDER BY contact_id_18, period)  as RN
+   FROM campaign_1 where campaigns = 0
+) 
+select * FROM CTE WHERE RN > 1;
+
+ --delete if dups
+-- delete from campaign_1 where approval_qtr like '2022%' and period like '2023%' and campaigns=0;
+ 
+--******************************************************************************************
+-- Create table CAMPAIGN_FIX
+--******************************************************************************************
+--this table will have the right, averaged counts for quarters before or same as approval quarter
+--drop table campaign_fix;
+-- select count(*) from campaign_fix;
+select * into campaign_fix from (
+ select s.contact_id_18, s.period, substring(s.approval_qtr,1,4) as approval_yr, s.approval_qtr, 
+		round(avg(cast(s1.campaigns as float)),0) as campaigns 
+   from  campaign_1 as s left join campaign_1 as s1 on s.contact_id_18 = s1.contact_id_18
+  where s.period <= s.approval_qtr and substring(s.approval_qtr,1,4) = substring(s.period,1,4) --same year, quarters before or same as approval qtr
+    and  s1.period > s1.approval_qtr and substring(s1.approval_qtr,1,4) = substring(s1.period,1,4) --same year, quarters after approval qtr
+	  --  and s1.contact_id_18 = '0034y00002Qsj4ZAAR'
+ group by s.contact_id_18, s.period, substring(s.approval_qtr,1,4), s.approval_qtr ) as a; 
+-- select * from campaign_fix; 
+-- select * from campaign_1 where contact_id_18 = '0034y00002Qsj4ZAAR'; 
+
+--now use the fix table to update
+UPDATE A
+SET A.campaigns = B.campaigns
+FROM campaign_1 as A
+JOIN campaign_fix as B
+    ON A.contact_id_18 = B.contact_id_18 
+	   and A.approval_qtr = B.approval_qtr and A.approval_qtr = B.approval_qtr and A.period = B.period;
+	   
+--******************************************************************************************
+-- Create table CAMPAIGN_2
+--******************************************************************************************
+-- select top 10 * from campaign_final;
+--select * from campaign where contact_id = '003f3000025GRh5' and start_date between '2021-07-01' and '2021-09-30';
+-- drop table campaign_2;
+select * into campaign_2 from (
+select contact_id_18, 
+			[2020_Q1] as "campaigns_2020_Q1",[2020_Q2] as "campaigns_2020_Q2",[2020_Q3] as "campaigns_2020_Q3",[2020_Q4] as "campaigns_2020_Q4",
+			[2021_Q1] as "campaigns_2021_Q1",[2021_Q2] as "campaigns_2021_Q2",[2021_Q3] as "campaigns_2021_Q3",[2021_Q4] as "campaigns_2021_Q4",
+			[2022_Q1] as "campaigns_2022_Q1",[2022_Q2] as "campaigns_2022_Q2",[2022_Q3] as "campaigns_2022_Q3",[2022_Q4] as "campaigns_2022_Q4",
+			[2023_Q1] as "campaigns_2023_Q1",[2023_Q2] as "campaigns_2023_Q2",[2023_Q3] as "campaigns_2023_Q3" 
+from (select contact_id_18, period, campaigns from campaign_1) d
+pivot (max(campaigns) for period in ([2020_Q1],[2020_Q2],[2020_Q3],[2020_Q4],[2021_Q1],[2021_Q2],[2021_Q3],[2021_Q4],[2022_Q1],[2022_Q2],[2022_Q3],[2022_Q4],[2023_Q1],[2023_Q2],[2023_Q3])) as piv) as a;
+
+--******************************************************************************************
+-- Create table CAMPAIGN_SUMMARY
+--******************************************************************************************
+-- drop table campaign_summary;
+select * into campaign_summary from (
+select s.*,
+(isnull(s.campaigns_2020_Q1,0) + isnull(s.campaigns_2020_Q2,0)) as campaigns_2020_H1, 
+(isnull(s.campaigns_2020_Q3,0) + isnull(s.campaigns_2020_Q4,0)) as campaigns_2020_H2, 
+(isnull(s.campaigns_2021_Q1,0) + isnull(s.campaigns_2021_Q2,0)) as campaigns_2021_H1, 
+(isnull(s.campaigns_2021_Q3,0) + isnull(s.campaigns_2021_Q4,0)) as campaigns_2021_H2, 
+(isnull(s.campaigns_2022_Q1,0) + isnull(s.campaigns_2022_Q2,0)) as campaigns_2022_H1, 
+(isnull(s.campaigns_2022_Q3,0) + isnull(s.campaigns_2022_Q4,0)) as campaigns_2022_H2, 
+(isnull(s.campaigns_2023_Q1,0) + isnull(s.campaigns_2023_Q2,0)) as campaigns_2023_H1, 
+(isnull(s.campaigns_2023_Q3,0)) as campaigns_2023_H2,
+(isnull(s.campaigns_2020_Q1,0) + isnull(s.campaigns_2020_Q2,0) + isnull(s.campaigns_2020_Q3,0) + isnull(s.campaigns_2020_Q4,0)) as campaigns_2020, 
+(isnull(s.campaigns_2021_Q1,0) + isnull(s.campaigns_2021_Q2,0) + isnull(s.campaigns_2021_Q3,0) + isnull(s.campaigns_2021_Q4,0)) as campaigns_2021,
+(isnull(s.campaigns_2022_Q1,0) + isnull(s.campaigns_2022_Q2,0) + isnull(s.campaigns_2022_Q3,0) + isnull(s.campaigns_2022_Q4,0)) as campaigns_2022,
+(isnull(s.campaigns_2023_Q1,0) + isnull(s.campaigns_2023_Q2,0) + isnull(s.campaigns_2023_Q3,0)) as campaigns_2023
+from campaign_2 as s) as y;
+--select * from campaign_summary where contact_id = '0033300001e7hEPAAY' and start_date between '2020-07-01' and '2020-09-30';
+
+alter table campaign_summary add campaign_rank_2023 int;
+alter table campaign_summary add campaign_rank_2022 int;
+alter table campaign_summary add campaign_rank_2021 int;
+alter table campaign_summary add campaign_rank_2020 int;
+
+--******************************************************************************************
+--!!!!!!!! CAMPAIGN RANKING !!!!!!!!
+--******************************************************************************************
+select distinct campaigns_2023, nrank, count(*) from (SELECT campaigns_2023, 1+(rank() over (order by campaigns_2023)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from campaign_summary where campaigns_2023 > 0) as x group by campaigns_2023, nrank order by nrank desc, campaigns_2023 desc;
+select distinct campaigns_2022, nrank, count(*) from (SELECT campaigns_2022, 1+(rank() over (order by campaigns_2022)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from campaign_summary where campaigns_2022 > 0) as x group by campaigns_2022, nrank order by nrank desc, campaigns_2022 desc;
+select distinct campaigns_2021, nrank, count(*) from (SELECT campaigns_2021, 1+(rank() over (order by campaigns_2021)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from campaign_summary where campaigns_2021 > 0) as x group by campaigns_2021, nrank order by nrank desc, campaigns_2021 desc;
+select distinct campaigns_2020, nrank, count(*) from (SELECT campaigns_2020, 1+(rank() over (order by campaigns_2020)-1) * 4 / count(1) over (partition by (select 1)) as nrank 
+from campaign_summary where campaigns_2020 > 0) as x group by campaigns_2020, nrank order by nrank desc, campaigns_2020 desc; 
+
+update campaign_summary set campaign_rank_2023 = 1 where campaigns_2023 <= 0;
+update campaign_summary set campaign_rank_2023 = 2 where campaigns_2023 = 1;
+update campaign_summary set campaign_rank_2023 = 3 where campaigns_2023 between 2 and 3;
+update campaign_summary set campaign_rank_2023 = 4 where campaigns_2023 >= 4; 
+
+update campaign_summary set campaign_rank_2022 = 1 where campaigns_2022 <= 0;
+update campaign_summary set campaign_rank_2022 = 2 where campaigns_2022 = 1;
+update campaign_summary set campaign_rank_2022 = 3 where campaigns_2022 between 2 and 4;
+update campaign_summary set campaign_rank_2022 = 4 where campaigns_2022 >= 5; 
+
+update campaign_summary set campaign_rank_2021 = 1 where campaigns_2021 <= 0;
+update campaign_summary set campaign_rank_2021 = 2 where campaigns_2021 = 1;
+update campaign_summary set campaign_rank_2021 = 3 where campaigns_2021 between 2 and 4;
+update campaign_summary set campaign_rank_2021 = 4 where campaigns_2021 >= 5; 
+
+update campaign_summary set campaign_rank_2020 = 1 where campaigns_2020 <= 0;
+update campaign_summary set campaign_rank_2020 = 2 where campaigns_2020 = 1;
+update campaign_summary set campaign_rank_2020 = 3 where campaigns_2020 between 2 and 4;
+update campaign_summary set campaign_rank_2020 = 4 where campaigns_2020 >= 5; 
+
+select campaign_rank_2023, count(*) from campaign_summary group by campaign_rank_2023 order by campaign_rank_2023;
+select campaign_rank_2022, count(*) from campaign_summary group by campaign_rank_2022 order by campaign_rank_2022;
+select campaign_rank_2021, count(*) from campaign_summary group by campaign_rank_2021 order by campaign_rank_2021;
+select campaign_rank_2020, count(*) from campaign_summary group by campaign_rank_2020 order by campaign_rank_2020;
+
+
+--#################################################################
+-- INTERACTION AND CAMPAIGN - RANK LEVEL 1
+--#################################################################
+SELECT 
+   ROW_NUMBER() OVER (
+	ORDER BY interaction_rank_2023 desc, interaction_rank_2022 desc, interaction_rank_2021 desc, interaction_rank_2020 desc 
+   ) row_num,
+   contact_id, interaction_rank_2023, interaction_rank_2022, interaction_rank_2021, interaction_rank_2020
+FROM interaction_summary
+order by interaction_rank_2023 desc, interaction_rank_2022 desc, interaction_rank_2021 desc, interaction_rank_2020 desc;
+
+SELECT 
+   ROW_NUMBER() OVER (
+	ORDER BY campaign_rank_2023 desc, campaign_rank_2022 desc, campaign_rank_2021 desc, campaign_rank_2020 desc 
+   ) row_num,
+   contact_id, campaign_rank_2023, campaign_rank_2022, campaign_rank_2021, campaign_rank_2020
+FROM campaign_summary
+order by campaign_rank_2023 desc, campaign_rank_2022 desc, campaign_rank_2021 desc, campaign_rank_2020 desc;
